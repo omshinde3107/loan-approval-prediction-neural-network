@@ -31,7 +31,6 @@ RUN pip install -r requirements.txt \
 # build context — generated beforehand by running train_model.py.)
 COPY app.py .
 COPY templates/ templates/
-COPY static/ static/
 COPY loan_model.keras .
 COPY scaler.pkl .
 COPY label_encoders.pkl .
