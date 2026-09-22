@@ -33,3 +33,5 @@ Desktop.ini
 .env
 .env.*
 *.env
+__pycache__/
+*.pyc

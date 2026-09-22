@@ -203,6 +203,10 @@ def preprocess_input(raw_data):
         except (TypeError, ValueError):
             raise ValueError(f"'{col}' must be a valid number (got '{value}').")
 
+    # Convert UI loan amount from rupees to dataset units (thousands).
+    # This MUST happen after all numeric fields have been collected.
+    
+    raw["LoanAmount"] = raw["LoanAmount"] / 1000
     # --- 3. Sanity-check numeric ranges -------------------------------------
     if raw["ApplicantIncome"] < 0 or raw["CoapplicantIncome"] < 0:
         raise ValueError("Income values cannot be negative.")
@@ -238,7 +242,69 @@ def preprocess_input(raw_data):
 
     return row_array
 
+# --------------------------------------------------------------------------- #
+# Financial analysis
+# --------------------------------------------------------------------------- #
 
+def calculate_financial_analysis(raw_data):
+    """
+    Calculate additional financial indicators.
+
+    These calculations are NOT used by the neural network.
+    They provide additional financial analysis for the user.
+    """
+
+    applicant_income = float(raw_data["ApplicantIncome"])
+    coapplicant_income = float(raw_data["CoapplicantIncome"])
+    loan_amount = float(raw_data["LoanAmount"])
+    loan_term_months = float(raw_data["Loan_Amount_Term"])
+
+    total_monthly_income = applicant_income + coapplicant_income
+
+    # Prevent division by zero.
+    if total_monthly_income <= 0:
+        raise ValueError("Total monthly income must be greater than 0.")
+
+    # Loan-to-income ratio.
+    annual_income = total_monthly_income * 12
+    loan_to_income_ratio = loan_amount / annual_income
+
+    # Default interest rate used only for the EMI estimate.
+    # This is NOT part of the neural network model.
+    annual_interest_rate = 10.5
+    monthly_interest_rate = annual_interest_rate / (12 * 100)
+
+    # EMI calculation.
+    if monthly_interest_rate > 0:
+        emi = (
+            loan_amount
+            * monthly_interest_rate
+            * (1 + monthly_interest_rate) ** loan_term_months
+            / ((1 + monthly_interest_rate) ** loan_term_months - 1)
+        )
+    else:
+        emi = loan_amount / loan_term_months
+
+    # EMI as a percentage of monthly income.
+    emi_to_income_ratio = (emi / total_monthly_income) * 100
+
+    # Simple affordability classification.
+    if emi_to_income_ratio <= 30:
+        affordability = "Comfortable"
+    elif emi_to_income_ratio <= 40:
+        affordability = "Moderate"
+    else:
+        affordability = "High Financial Burden"
+
+    return {
+        "loan_amount": round(loan_amount, 2),
+        "total_monthly_income": round(total_monthly_income, 2),
+        "annual_interest_rate": annual_interest_rate,
+        "estimated_emi": round(emi, 2),
+        "emi_to_income_ratio": round(emi_to_income_ratio, 2),
+        "loan_to_income_ratio": round(loan_to_income_ratio, 4),
+        "affordability": affordability,
+    }
 # --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
@@ -278,14 +344,19 @@ def predict():
 
         probability = float(model.predict(features, verbose=0)[0][0])
         approved = probability >= 0.5
+        
         confidence = probability if approved else (1 - probability)
+
+        financial_analysis = calculate_financial_analysis(raw_data)
 
         return jsonify(
             {
                 "prediction": "Loan Approved" if approved else "Loan Rejected",
                 "approved": approved,
-                "probability": round(probability, 4),
-                "confidence": round(confidence * 100, 2),
+                "probability": round(probability, 6),
+                "confidence": round(confidence * 100, 4),
+                "raw_probability": probability,
+                "financial_analysis": financial_analysis,
             }
         ), 200
 
